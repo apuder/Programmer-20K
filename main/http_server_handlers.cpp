@@ -1,0 +1,219 @@
+#include "esp_http_server.h"
+#include "esp_log.h"
+#include "esp_err.h"
+#include "wifi.h"
+#include "nvs_flash.h"
+#include "nvs.h"
+#include "esp_netif.h"
+#include "esp_event.h"
+#include "cJSON.h"
+#include "upload_receiver.h"
+
+#include <cstring>
+#include <string>
+#include <cstdio>
+
+static const char *TAG = "HTTP";
+
+static httpd_handle_t server = NULL;
+
+
+// The build system (EMBED_TXTFILES) provides symbols _binary_index_html_start/_end
+extern const uint8_t _binary_index_html_start[] asm("_binary_index_html_start");
+extern const uint8_t _binary_index_html_end[]   asm("_binary_index_html_end");
+
+
+static esp_err_t send_json(httpd_req_t *req, const char *json)
+{
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, json);
+}
+
+static esp_err_t index_get_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/html");
+    size_t len = (size_t)(_binary_index_html_end - _binary_index_html_start);
+    return httpd_resp_send(req, (const char*)_binary_index_html_start, len);
+}
+
+/* GET /status
+ * Returns { connected: bool, ip: "x.y.z.w" }
+ */
+static esp_err_t status_get_handler(httpd_req_t *req)
+{
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "server", "running");
+    cJSON_AddStringToObject(root, "connected", "true"); //XXX
+    char *out = cJSON_PrintUnformatted(root);
+    send_json(req, out ? out : "{\"server\":\"running\"}");
+    if (out) free(out);
+    cJSON_Delete(root);
+    return ESP_OK;
+}
+
+/* Wi‑Fi code has been moved to main/wifi.cpp — http server simply registers the endpoints.
+ * see wifi.h for the API used below
+ */
+
+/* /wifi POST handler implemented in main/wifi.cpp */
+
+/* /wifi DELETE handler implemented in main/wifi.cpp */
+
+/* POST /upload — streams incoming request body and hands bytes to the upload_receiver interface.
+ * The UI posts each file as multipart/form-data — server receives the raw multipart body chunks and forwards
+ * them in streaming fashion to the configured upload handler. This keeps RAM low and avoids filesystem
+ * dependencies in the default firmware.
+ */
+static esp_err_t upload_post_handler(httpd_req_t *req)
+{
+    // Determine target from query param "target" or default to flash
+    char buf[64];
+    memset(buf, 0, sizeof(buf));
+    if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) == ESP_OK) {
+        ESP_LOGI(TAG, "query: %s", buf);
+    }
+
+    // naive parse for target param
+    std::string target = "flash";
+    if (strlen(buf) > 0) {
+        const char *p = strstr(buf, "target=");
+        if (p) {
+            p += strlen("target=");
+            const char *e = strchr(p, '&');
+            if (!e) e = p + strlen(p);
+            target = std::string(p, e-p);
+        }
+    }
+
+    // Determine an optional filename hint (query param `name`) — receiver may use or ignore it.
+    char namebuf[128];
+    namebuf[0] = '\0';
+    if (strlen(buf) > 0) {
+        const char *p = strstr(buf, "name=");
+        if (p) {
+            p += strlen("name=");
+            const char *e = strchr(p, '&');
+            size_t len = e ? (size_t)(e - p) : strlen(p);
+            if (len > 0 && len < sizeof(namebuf)) memcpy(namebuf, p, len);
+            namebuf[len < sizeof(namebuf) ? len : sizeof(namebuf)-1] = '\0';
+        }
+    }
+
+    // Initialize receiver for streaming uploads
+    if (!upload_receiver_init(target.c_str(), namebuf[0] ? namebuf : NULL)) {
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        return send_json(req, "{\"success\":false,\"error\":\"receiver init\"}");
+    }
+
+    const int buf_len = 1024;
+    char *read_buf = (char*)malloc(buf_len);
+    if (!read_buf) {
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        return send_json(req, "{\"success\":false,\"error\":\"alloc\"}");
+    }
+
+    int total = 0;
+    int r;
+    while ((r = httpd_req_recv(req, read_buf, buf_len)) > 0) {
+        total += r;
+        // stream chunk into the receiver
+        size_t consumed = upload_receiver_write((const uint8_t*)read_buf, (size_t)r);
+        if (consumed != (size_t)r) {
+            ESP_LOGW(TAG, "Receiver failed to accept bytes (expected %d got %u)", r, (unsigned)consumed);
+            r = -1; // mark failure
+            break;
+        }
+        // otherwise we discard the bytes
+    }
+
+    // notify receiver of completion/failure
+    if (r < 0) upload_receiver_finish(false);
+    else upload_receiver_finish(true);
+    free(read_buf);
+
+    if (r < 0) {
+        ESP_LOGW(TAG, "Receive error: %d", r);
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        return send_json(req, "{\"success\":false,\"error\":\"recv\"}");
+    }
+
+    // Determine filename (receiver may report an assigned name)
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddBoolToObject(out, "success", true);
+    cJSON_AddStringToObject(out, "target", target.c_str());
+    cJSON_AddNumberToObject(out, "bytes", total);
+
+    char *s = cJSON_PrintUnformatted(out);
+    send_json(req, s ? s : "{\"success\":true}\n");
+    if (s) free(s);
+    cJSON_Delete(out);
+    return ESP_OK;
+}
+
+/* helper to mount nvs (used by wifi handlers) and start http server */
+esp_err_t start_http_server()
+{
+    init_wifi();
+
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    // lower stack usage for constrained systems
+    config.stack_size = 4096;
+
+    // Ensure network stack / event loop are initialized before the HTTP server creates sockets
+    // HTTP server only; wifi setup/initialization is performed by the wifi module.
+
+    if (httpd_start(&server, &config) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start HTTP server");
+        return ESP_FAIL;
+    }
+
+    httpd_uri_t index_get = {
+        .uri = "/",
+        .method = HTTP_GET,
+        .handler = index_get_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &index_get);
+
+    httpd_uri_t index_html_get = {
+        .uri = "/index.html",
+        .method = HTTP_GET,
+        .handler = index_get_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &index_html_get);
+
+    httpd_uri_t status_get = {
+        .uri = "/status",
+        .method = HTTP_GET,
+        .handler = status_get_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &status_get);
+
+    // register wifi handlers implemented in main/wifi.cpp
+    register_wifi_http_handlers(server);
+
+    httpd_uri_t upload = {
+        .uri = "/upload",
+        .method = HTTP_POST,
+        .handler = upload_post_handler
+    };
+    httpd_register_uri_handler(server, &upload);
+
+    ESP_LOGI(TAG, "HTTP server started");
+
+    // No Wi‑Fi initialization here; wifi handlers are responsible for initializing Wi‑Fi
+    return ESP_OK;
+}
+
+/* optional server stop */
+esp_err_t stop_http_server()
+{
+    if (server) {
+        httpd_stop(server);
+        server = NULL;
+    }
+    // no filesystem to unmount in this simplified handler (uploads are handed off via upload_receiver)
+    return ESP_OK;
+}
