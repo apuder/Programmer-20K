@@ -4,7 +4,7 @@ This lightweight Python mock server serves the project's `index.html` and implem
 
 Features
 - Serves `/` and `/index.html` from `main/index.html` so you can test the real UI in your browser
-- GET `/status` — returns {connected, ip}
+- GET `/status` — returns {mode, ip}
 - POST `/wifi` — accepts JSON {ssid,password}, stores credentials into a local mock NVS file and returns {success,connected,ip}
 - DELETE `/wifi` — clears stored credentials
 - POST `/upload` — accepts multipart/form-data file field `file` and optional `storage` query/form param; writes to `uploads/` and replies with JSON

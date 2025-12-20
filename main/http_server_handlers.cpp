@@ -95,13 +95,12 @@ static esp_err_t serial_ws_handler(httpd_req_t *req)
 }
 
 /* GET /status
- * Returns { connected: bool, ip: "x.y.z.w" }
+ * Returns minimal server status JSON (no 'connected')
  */
 static esp_err_t status_get_handler(httpd_req_t *req)
 {
     cJSON *root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "server", "running");
-    cJSON_AddStringToObject(root, "connected", "true"); //XXX
     char *out = cJSON_PrintUnformatted(root);
     send_json(req, out ? out : "{\"server\":\"running\"}");
     if (out) free(out);

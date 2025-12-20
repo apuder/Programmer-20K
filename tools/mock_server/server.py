@@ -50,17 +50,11 @@ def index():
 
 
 
-# Toggle 20K connected/not connected every 10 seconds
 @app.route('/status', methods=['GET'])
 def status():
-    # Use time since epoch to alternate every 10 seconds
-    now = int(time.time())
-    connected = (now // 10) % 2 == 0
+    """Return minimal status without 'connected'."""
     wifi_mode = get_wifi_mode()
-    if connected:
-        return jsonify({'connected': True, 'ip': '192.168.1.42', 'mode': wifi_mode})
-    else:
-        return jsonify({'connected': False, 'mode': wifi_mode})
+    return jsonify({'mode': wifi_mode, 'ip': '192.168.1.42'})
 
 
 @app.route('/wifi', methods=['POST'])
