@@ -8,6 +8,7 @@ Features
 - POST `/wifi` — accepts JSON {ssid,password}, stores credentials into a local mock NVS file and returns {success,connected,ip}
 - DELETE `/wifi` — clears stored credentials
 - POST `/upload` — accepts multipart/form-data file field `file` and optional `storage` query/form param; writes to `uploads/` and replies with JSON
+- WebSocket `/serial` — streams `"Hello Programmer 20K"` every 5 seconds for the Serial Monitor UI
 
 Quick setup
 

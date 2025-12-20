@@ -26,15 +26,17 @@
 		.card.wifi .field{max-width:640px}
 		.card.wifi .row{justify-content:flex-start}
 		.card.twentyk{border-left:6px solid rgba(249,115,22,0.9); background:linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.006));}
+		.card.serial{border-left:6px solid rgba(6,182,212,0.95); background:linear-gradient(180deg, rgba(6,182,212,0.03), rgba(255,255,255,0.006));}
 
 		.field{display:flex;flex-direction:column;margin-bottom:12px}
 		.field.row-inline{display:flex;flex-direction:row;gap:12px;align-items:center}
 		label{font-size:12px;color:var(--muted);display:inline-block;margin-bottom:6px}
 		input[type=text], input[type=password], select{padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit;font-size:14px;outline:none}
+		select{background-color:rgba(0,0,0,0.4);color:#e6eef6}
+		select option{background-color:#0b1220;color:#e6eef6}
 		.row{display:flex;gap:10px;align-items:center}
 		.btn{background:linear-gradient(90deg,var(--accent), #4c1d95); border:0;color:white;padding:10px 14px;border-radius:10px;cursor:pointer;font-weight:700;box-shadow:0 6px 16px rgba(124,58,237,0.08)}
 		.btn.disabled{opacity:0.5;cursor:not-allowed}
-		.btn.secondary{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted)}
 
 		.status {display:flex;gap:10px;align-items:center}
 		.card h2{margin:0 0 12px 0;padding:6px 0;font-size:16px;color: #e9f0ff}
@@ -45,7 +47,7 @@
 		.badge.off{background:rgba(255,255,255,0.03);color:var(--muted);border:1px solid rgba(255,255,255,0.02)}
 
 		/* Upload area */
-		.drop{min-height:160px;border-radius:10px;border:1px dashed rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:center;flex-direction:column;padding:18px 22px;background:linear-gradient(180deg, rgba(255,255,255,0.018), rgba(255,255,255,0.002));text-align:center;color:var(--muted);position:relative;width:100%;box-sizing:border-box}
+		.drop{min-height:160px;border-radius:10px;border:1px dashed rgba(255,255,255,0.6);display:flex;align-items:center;justify-content:center;flex-direction:column;padding:18px 22px;background:linear-gradient(180deg, rgba(255,255,255,0.018), rgba(255,255,255,0.002));text-align:center;color:var(--muted);position:relative;width:100%;box-sizing:border-box}
 		.drop.drag{border-color: rgba(124,58,237,0.7);box-shadow:0 6px 18px rgba(124,58,237,0.12)}
 		.drop.error{border-color: rgba(255, 99, 99, 0.9);box-shadow:0 6px 20px rgba(255, 80, 80, 0.12)}
 		.drop .upload-error-overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
@@ -56,6 +58,16 @@
 		.progress{height:8px;background:rgba(255,255,255,0.03);border-radius:999px;overflow:hidden;flex:1}
 		.progress > b{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2));width:0%}
 		small.muted{color:var(--muted);font-size:12px}
+
+		/* Serial monitor */
+		.serial-header{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:10px}
+		.serial-header .lead{margin:2px 0 0 0}
+		.serial-actions{display:flex;align-items:center;gap:10px}
+		.serial-log-wrap{border:1px solid rgba(255,255,255,0.06);border-radius:10px;background:linear-gradient(180deg, rgba(0,0,0,0.25), rgba(255,255,255,0.02));padding:6px 8px}
+		#serialLog{height:220px;margin:0;padding:10px 12px;overflow-y:auto;font-family:"JetBrains Mono","SFMono-Regular","Menlo","Consolas",monospace;font-size:13px;white-space:pre-wrap;word-break:break-word;background:transparent;color:#e6eef6}
+		.badge.serial-live{background:linear-gradient(90deg, #0ea5e933, #06b6d466);color:#0f1724}
+
+		.btn.serial-primary{background:linear-gradient(90deg, #06b6d4, #0891b2); border:0;color:white;box-shadow:0 6px 16px rgba(6,182,212,0.12)}
 
 		footer.help{margin-top:16px;color:var(--muted);font-size:13px}
 
@@ -101,7 +113,7 @@
 				<circle cx="12" cy="7" r="2.2" fill="#06b6d4"></circle>
 			</svg>
 			<div>
-				<h1>Programmer-20K</h1>
+				<h1>Programmer 20K</h1>
 				<p class="lead">Web-based bitstream uploader for the 20K.</p>
 			</div>
 		</header>
@@ -122,8 +134,8 @@
 				</div>
 			</section>
 
-			<section class="card twentyk">
-				<h2 style="margin-top:0;margin-bottom:18px;font-size:18px;letter-spacing:0.5px">20K</h2>
+			<section class="card twentyk" style="margin-bottom:32px">
+				<h2 style="margin-top:0;margin-bottom:18px;font-size:18px;letter-spacing:0.5px">Uploader</h2>
 				<div class="twentyk-top">
 					<div class="twentyk-controls">
 						<div class="field" style="margin-bottom:0">
@@ -138,15 +150,12 @@
 							</select>
 						</div>
 					</div>
-					<div style="margin-left:auto;opacity:0.8;font-size:13px;color:var(--muted)">20K uploader</div>
 				</div>
 				<div id="uploadSection" style="opacity:0.5;pointer-events:none">
-					<label style="display:block;margin-bottom:8px">Upload file (drag & drop or select)</label>
 					<div id="droparea" class="drop" tabindex="0">
 						<div class="drop-inner" style="display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none">
 							<svg width="58" height="58" viewBox="0 0 24 24" fill="none"><path d="M12 3v10" stroke="#94a3b8" stroke-width="1.6" stroke-linecap="round"/><path d="M16 7l-4-4-4 4" stroke="#94a3b8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><rect x="3" y="13" width="18" height="7" rx="2" stroke="#94a3b8" stroke-width="1.2"/></svg>
 							<div style="font-weight:700">Drop a file to upload</div>
-							<div style="max-width:440px;color:var(--muted);font-size:13px">Only one file at a time. POSTs to <code>/upload</code>.</div>
 						</div>
 						<input id="fileInput" type="file" style="display:none">
 						<div class="upload-error-overlay" style="display:none;">
@@ -159,6 +168,20 @@
 						<div id="uploadProgressText" style="font-size:13px;color:var(--muted);margin-top:4px"></div>
 					</div>
 					<div id="uploadResult" style="margin-top:10px;font-size:15px;font-weight:600"></div>
+				</div>
+			</section>
+
+			<section class="card serial">
+				<div class="serial-header">
+					<div>
+						<h2 style="margin:0 0 6px 0;font-size:18px;letter-spacing:0.5px">Serial Monitor</h2>
+					</div>
+					<div class="serial-actions">
+						<button class="btn serial-primary" id="serialClear">Clear</button>
+					</div>
+				</div>
+				<div class="serial-log-wrap">
+					<pre id="serialLog" aria-live="polite"></pre>
 				</div>
 			</section>
 		</main>
@@ -176,9 +199,15 @@
 			const uploadProgressBar = el('uploadProgressBar');
 			const uploadProgressText = el('uploadProgressText');
 			const uploadResult = el('uploadResult');
+			const serialLog = el('serialLog');
+			const serialClear = el('serialClear');
+			const serialDecoder = new TextDecoder();
 
 			let isConnected = false;
 			let polling = null;
+			let serialSocket = null;
+			let serialReconnect = null;
+			let serialBackoff = 500;
 
 			connectBtn.addEventListener('click', async()=>{
 				const body = { ssid: ssid.value || '', password: pw.value || '' };
@@ -253,6 +282,61 @@
 				} else {
 					connectBtn.classList.remove('disabled');
 				}
+			}
+
+			serialClear.addEventListener('click', ()=>{
+				serialLog.textContent = '';
+				serialLog.scrollTop = serialLog.scrollHeight;
+			});
+
+
+			function appendSerial(data){
+				let text = '';
+				if(typeof data === 'string') text = data;
+				else if(data instanceof ArrayBuffer) text = serialDecoder.decode(new Uint8Array(data));
+				else text = String(data || '');
+
+				const atBottom = (serialLog.scrollTop + serialLog.clientHeight) >= (serialLog.scrollHeight - 8);
+				serialLog.textContent += text;
+				const maxLen = 24000;
+				if(serialLog.textContent.length > maxLen){
+					serialLog.textContent = serialLog.textContent.slice(serialLog.textContent.length - maxLen);
+				}
+				if(atBottom) serialLog.scrollTop = serialLog.scrollHeight;
+			}
+
+			function scheduleSerialReconnect(){
+				if(serialReconnect) clearTimeout(serialReconnect);
+				serialReconnect = setTimeout(connectSerialSocket, serialBackoff);
+				serialBackoff = Math.min(Math.round(serialBackoff * 1.6), 6000);
+			}
+
+			function teardownSerialSocket(){
+				if(serialReconnect){ clearTimeout(serialReconnect); serialReconnect = null; }
+				if(serialSocket){
+					serialSocket.onopen = null;
+					serialSocket.onmessage = null;
+					serialSocket.onclose = null;
+					serialSocket.onerror = null;
+					try{ serialSocket.close(); }catch(e){}
+					serialSocket = null;
+				}
+			}
+
+			function connectSerialSocket(){
+				teardownSerialSocket();
+				const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+				try{
+					serialSocket = new WebSocket(proto + '://' + location.host + '/serial');
+					serialSocket.binaryType = 'arraybuffer';
+				} catch(e){
+					scheduleSerialReconnect();
+					return;
+				}
+				serialSocket.onopen = ()=>{ serialBackoff = 500; };
+				serialSocket.onmessage = (ev)=>{ appendSerial(ev.data); };
+				serialSocket.onclose = ()=>{ scheduleSerialReconnect(); };
+				serialSocket.onerror = ()=>{ if(serialSocket) serialSocket.close(); };
 			}
 
 			// Drag/drop handlers
@@ -341,6 +425,8 @@
 				};
 				xhr.send(form);
 			}
+
+			connectSerialSocket();
 
 			function el(id){ return document.getElementById(id); }
 		})();

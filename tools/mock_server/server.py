@@ -10,6 +10,7 @@ import os
 import time
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file, abort
+from flask_sock import Sock
 
 ROOT = Path(__file__).resolve().parents[2]
 INDEX_PATH = ROOT / 'main' / 'index.html'
@@ -18,6 +19,7 @@ UPLOAD_DIR = Path(__file__).resolve().parents[0] / 'uploads'
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 app = Flask('programmer20k-mock')
+sock = Sock(app)
 
 
 def read_store():
@@ -119,6 +121,18 @@ def upload():
             chunk = f.stream.read(8192)
 
     return jsonify({'success': True, 'message': 'received', 'filename': filename, 'bytes': total, 'target': target})
+
+
+@sock.route('/serial')
+def serial(ws):
+    """Mock serial websocket that pushes a heartbeat string every 5 seconds."""
+    try:
+        while True:
+            ws.send("Hello Programmer 20K\n")
+            time.sleep(5)
+    except Exception:
+        # Client disconnected or socket error; just exit the handler
+        return
 
 
 def main():

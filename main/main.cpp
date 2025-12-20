@@ -12,9 +12,6 @@
 #include "freertos/task.h"
 #include "esp_system.h"
 //#include "esp_spi_flash.h"
-#include <stdio.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "driver/uart.h"
 #include "esp_log.h"
 #include "esp_err.h"
@@ -23,6 +20,7 @@
 #include "led.h"
 #include "event.h"
 #include "flash.h"
+#include "http_server_handlers.h"
 
 static const char *TAG = "Programmer-20K";
 
@@ -30,9 +28,6 @@ static const char *TAG = "Programmer-20K";
 #define UART_RX_PIN     16          // GPIO16 = RX
 #define UART_TX_PIN     17          // TX (unused but required by driver)
 #define BUF_SIZE        1024
-
-
-extern esp_err_t start_http_server();
 
 
 extern "C" void app_main(void)
@@ -93,23 +88,15 @@ extern "C" void app_main(void)
 
     auto uart_task = [](void *arg) -> void {
         uint8_t data[BUF_SIZE];
-        uint8_t value = 0;
         while (1) {
-#if 1
-            printf("Cookie: 0x%02X\n", spi_get_cookie());
-#if 1
-            unsigned long id = flashReadMfdDevId();
-            printf("Flash ID: (0x%lx) %s\n", id, flashMfdDevIdStr(id));
-#endif
-            vTaskDelay(pdMS_TO_TICKS(1000));
-#else
             int len = uart_read_bytes(UART_PORT, data, sizeof(data), pdMS_TO_TICKS(100));
             if (len > 0) {
+                // forward to websocket clients if connected
+                log_serial_monitor(data, len);
                 for (int i = 0; i < len; i++) putchar((char)data[i]);
                 fflush(stdout);
             }
             vTaskDelay(pdMS_TO_TICKS(10));
-#endif
         }
     };
 

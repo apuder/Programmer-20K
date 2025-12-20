@@ -1,3 +1,4 @@
+#include "sdkconfig.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_err.h"
@@ -8,6 +9,9 @@
 #include "esp_event.h"
 #include "cJSON.h"
 #include "upload_receiver.h"
+#include "http_server_handlers.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 #include <cstring>
 #include <string>
@@ -16,6 +20,8 @@
 static const char *TAG = "HTTP";
 
 static httpd_handle_t server = NULL;
+static SemaphoreHandle_t serial_ws_mutex = NULL;
+static int serial_ws_fd = -1;
 
 
 // The build system (EMBED_TXTFILES) provides symbols _binary_index_html_start/_end
@@ -34,6 +40,58 @@ static esp_err_t index_get_handler(httpd_req_t *req)
     httpd_resp_set_type(req, "text/html");
     size_t len = (size_t)(_binary_index_html_end - _binary_index_html_start);
     return httpd_resp_send(req, (const char*)_binary_index_html_start, len);
+}
+
+static void set_serial_ws_fd(int fd)
+{
+    if (serial_ws_mutex) xSemaphoreTake(serial_ws_mutex, portMAX_DELAY);
+    serial_ws_fd = fd;
+    if (serial_ws_mutex) xSemaphoreGive(serial_ws_mutex);
+}
+
+static int get_serial_ws_fd()
+{
+    int fd = -1;
+    if (!serial_ws_mutex) return serial_ws_fd;
+    if (xSemaphoreTake(serial_ws_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        fd = serial_ws_fd;
+        xSemaphoreGive(serial_ws_mutex);
+    }
+    return fd;
+}
+
+static esp_err_t serial_ws_handler(httpd_req_t *req)
+{
+    if (req->method == HTTP_GET) {
+        // Handshake request
+        int fd = httpd_req_to_sockfd(req);
+        ESP_LOGI(TAG, "Serial WS open fd=%d", fd);
+        set_serial_ws_fd(fd);
+        return ESP_OK;
+    }
+
+    httpd_ws_frame_t frame = {0};
+    frame.type = HTTPD_WS_TYPE_BINARY;
+    esp_err_t ret = httpd_ws_recv_frame(req, &frame, 0);
+    if (ret != ESP_OK) return ret;
+
+    if (frame.len) {
+        frame.payload = (uint8_t*)malloc(frame.len + 1);
+        if (!frame.payload) return ESP_ERR_NO_MEM;
+        ret = httpd_ws_recv_frame(req, &frame, frame.len);
+        if (ret == ESP_OK) frame.payload[frame.len] = 0;
+    }
+
+    if (frame.type == HTTPD_WS_TYPE_CLOSE) {
+        ESP_LOGI(TAG, "Serial WS closed");
+        set_serial_ws_fd(-1);
+    } else if (frame.type == HTTPD_WS_TYPE_PING) {
+        frame.type = HTTPD_WS_TYPE_PONG;
+        httpd_ws_send_frame(req, &frame);
+    }
+
+    if (frame.payload) free(frame.payload);
+    return ESP_OK;
 }
 
 /* GET /status
@@ -151,7 +209,7 @@ static esp_err_t upload_post_handler(httpd_req_t *req)
 }
 
 /* helper to mount nvs (used by wifi handlers) and start http server */
-esp_err_t start_http_server()
+extern "C" esp_err_t start_http_server()
 {
     init_wifi();
 
@@ -161,6 +219,10 @@ esp_err_t start_http_server()
 
     // Ensure network stack / event loop are initialized before the HTTP server creates sockets
     // HTTP server only; wifi setup/initialization is performed by the wifi module.
+
+    if (!serial_ws_mutex) {
+        serial_ws_mutex = xSemaphoreCreateMutex();
+    }
 
     if (httpd_start(&server, &config) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start HTTP server");
@@ -201,6 +263,15 @@ esp_err_t start_http_server()
     };
     httpd_register_uri_handler(server, &upload);
 
+    httpd_uri_t serial_ws = {
+        .uri = "/serial",
+        .method = HTTP_GET,
+        .handler = serial_ws_handler,
+        .user_ctx = NULL,
+        .is_websocket = true
+    };
+    httpd_register_uri_handler(server, &serial_ws);
+
     ESP_LOGI(TAG, "HTTP server started");
 
     // No Wi‑Fi initialization here; wifi handlers are responsible for initializing Wi‑Fi
@@ -208,12 +279,31 @@ esp_err_t start_http_server()
 }
 
 /* optional server stop */
-esp_err_t stop_http_server()
+extern "C" esp_err_t stop_http_server()
 {
     if (server) {
         httpd_stop(server);
         server = NULL;
     }
+    set_serial_ws_fd(-1);
     // no filesystem to unmount in this simplified handler (uploads are handed off via upload_receiver)
     return ESP_OK;
+}
+
+extern "C" void log_serial_monitor(uint8_t *data, int len)
+{
+    if (!data || len <= 0 || !server) return;
+    int fd = get_serial_ws_fd();
+    if (fd < 0) return;
+
+    httpd_ws_frame_t frame = {0};
+    frame.type = HTTPD_WS_TYPE_BINARY;
+    frame.payload = data;
+    frame.len = len;
+
+    esp_err_t err = httpd_ws_send_frame_async(server, fd, &frame);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "serial ws send failed: %s", esp_err_to_name(err));
+        set_serial_ws_fd(-1);
+    }
 }
