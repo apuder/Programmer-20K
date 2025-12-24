@@ -7,7 +7,8 @@
 #include "led.h"
 
 #define EVT_ALL_EVENTS (EVT_WIFI_NOT_INIT | EVT_WIFI_UP | EVT_WIFI_DOWN | EVT_CHECK_20K | \
-                        EVT_BUTTON_SHORT_PRESS | EVT_BUTTON_LONG_PRESS)
+                        EVT_BUTTON_SHORT_PRESS | EVT_BUTTON_LONG_PRESS | EVT_UPLOAD_START | \
+                        EVT_UPLOAD_SUCCESS | EVT_UPLOAD_FAIL)
 
 
 static EventGroupHandle_t eg;
@@ -52,7 +53,19 @@ static void event_task(void* arg)
     if (evt & EVT_BUTTON_LONG_PRESS) {
       // Reset Wi‑Fi configuration
       wifi_reset();
-    }    
+    }
+    if (evt & EVT_UPLOAD_START) {
+      // Indicate upload start with blue LED
+      set_led(false, false, true, false, false);
+    }
+    if (evt & EVT_UPLOAD_SUCCESS) {
+      // Indicate upload success with green LED
+      set_led(false, true, false, false, true);
+    }
+    if (evt & EVT_UPLOAD_FAIL) {
+      // Indicate upload failure with red LED
+      set_led(true, false, false, false, true);
+    }
   }
 }
 

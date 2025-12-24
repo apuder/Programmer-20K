@@ -230,6 +230,7 @@ public:
   bool programToSRAMBegin();
   bool programToSRAMWrite(const uint8_t* data, size_t len);
   bool programToSRAMEnd();
+  bool uploadBridge();
 };
 
 void uploadFPGAFirmware();

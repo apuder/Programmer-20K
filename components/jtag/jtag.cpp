@@ -10,6 +10,10 @@
 #include "jtag.h"
 
 
+extern const uint8_t _binary_bridge_bin_start[] asm("_binary_bridge_bin_start");
+extern const uint8_t _binary_bridge_bin_end[]   asm("_binary_bridge_bin_end");
+
+
 void JTAG_SendDataMSB(char* p, int bitlength, bool exit);
 
 
@@ -220,6 +224,25 @@ void JTAGAdapter::setup()
   gpio_config(&gpioConfig);
 }
 
+bool JTAGAdapter::uploadBridge()
+{
+  size_t bridge_size = _binary_bridge_bin_end - _binary_bridge_bin_start;
+  ESP_LOGI("JTAG", "Uploading bridge of size %u bytes", (unsigned)bridge_size);
+  if (!programToSRAMBegin()) {
+    ESP_LOGE("JTAG", "programToSRAMBegin() failed");
+    return false;
+  }
+  if (!programToSRAMWrite(_binary_bridge_bin_start, bridge_size)) {
+    ESP_LOGE("JTAG", "programToSRAMWrite() failed");
+    return false;
+  }
+  if (!programToSRAMEnd()) {
+    ESP_LOGE("JTAG", "programToSRAMEnd() failed");
+    return false;
+  }
+  ESP_LOGI("JTAG", "Bridge upload completed");
+  return true;
+}
 
 uint8_t reverse(uint8_t v)
 {

@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #define FLASH_SECTOR_SIZE          0x1000 // 4k
+#define FLASH_PAGE_SIZE            0x100  // 256 bytes
 
 uint8_t spi_get_cookie();
 

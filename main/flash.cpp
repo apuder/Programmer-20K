@@ -16,8 +16,6 @@
 #define FLASH_READ_MFG_DEV_ID      0x9f
 
 #define FLASH_WIP                  0x01
-#define FLASH_SECTOR_SIZE          0x1000 // 4k
-
 /* Interface defines */
 #define FLASH_CS    0x80
 #define FLASH_WPN   0x40
