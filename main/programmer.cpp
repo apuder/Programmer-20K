@@ -105,6 +105,11 @@ bool ProgrammerFlash::init() {
 ProgrammerFlash::~ProgrammerFlash() {
     uart_driver_delete(UART_PORT);
     start_serial_monitor();
+    ESP_LOGI(TAG, "Reloading FPGA");
+    JTAGAdapter* jtag = new JTAGAdapter();
+    jtag->setIR(RELOAD);
+    jtag->setIR(NOOP);
+    delete jtag;
 }
 
 uint8_t ProgrammerFlash::get_cookie() {

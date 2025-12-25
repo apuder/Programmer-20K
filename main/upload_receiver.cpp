@@ -88,11 +88,6 @@ extern "C" void upload_receiver_finish(bool success)
         if (success) {
             if (programmer->end_upload(success)) {
                 ESP_LOGI(TAG, "FPGA programming succeeded");
-                ESP_LOGI(TAG, "Reloading FPGA");
-                JTAGAdapter* jtag = new JTAGAdapter();
-                jtag->setIR(RELOAD);
-                jtag->setIR(NOOP);
-                delete jtag;
             } else {
                 ESP_LOGE(TAG, "FPGA programming end failed");
             }
