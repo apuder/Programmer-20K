@@ -3,6 +3,7 @@
 #include "esp_log.h"
 #include "esp_err.h"
 #include "wifi.h"
+#include "serial.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_netif.h"
@@ -88,6 +89,11 @@ static esp_err_t serial_ws_handler(httpd_req_t *req)
     } else if (frame.type == HTTPD_WS_TYPE_PING) {
         frame.type = HTTPD_WS_TYPE_PONG;
         httpd_ws_send_frame(req, &frame);
+    } else if (frame.type == HTTPD_WS_TYPE_TEXT || frame.type == HTTPD_WS_TYPE_BINARY) {
+        // Forward incoming text/binary data to UART TX
+        if (frame.payload && frame.len > 0) {
+            serial_transmit(frame.payload, frame.len);
+        }
     }
 
     if (frame.payload) free(frame.payload);

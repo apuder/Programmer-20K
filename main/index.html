@@ -190,6 +190,9 @@
 				<div class="serial-log-wrap">
 					<pre id="serialLog" aria-live="polite"></pre>
 				</div>
+				<div style="margin-top:10px">
+					<input type="text" id="serialInput" placeholder="Type to send to serial..." style="width:100%;box-sizing:border-box" />
+				</div>
 			</section>
 		</main>
 	</div>
@@ -209,6 +212,7 @@
 			const uploadResult = el('uploadResult');
 			const serialLog = el('serialLog');
 			const serialClear = el('serialClear');
+			const serialInput = el('serialInput');
 			const serialDecoder = new TextDecoder();
 
 			let isConnected = true;
@@ -253,6 +257,54 @@
 			serialClear.addEventListener('click', ()=>{
 				serialLog.textContent = '';
 				serialLog.scrollTop = serialLog.scrollHeight;
+			});
+
+			// Handle serial input: echo in input, send each keystroke, clear on Enter
+			serialInput.addEventListener('keydown', (e)=>{
+				if(!serialSocket || serialSocket.readyState !== WebSocket.OPEN) return;
+				const sendBytes = (bytes)=>{ try{ serialSocket.send(new Uint8Array(bytes)); }catch(_){} };
+				
+				// Ctrl+Letter -> control codes (Ctrl+A=0x01 .. Ctrl+Z=0x1A)
+				if(e.ctrlKey){
+					const key = e.key.toUpperCase();
+					if(key.length === 1 && key >= 'A' && key <= 'Z'){
+						sendBytes([key.charCodeAt(0) - 64]);
+						// keep default so input caret stays; Ctrl+C/etc won't insert text anyway
+						return;
+					}
+				}
+				
+				// Special keys mapping
+				switch(e.key){
+					case 'Enter':
+						// Send CR and clear input
+						sendBytes([0x0D]);
+						serialInput.value = '';
+						e.preventDefault();
+						return;
+					case 'Backspace':
+						sendBytes([0x08]);
+						// allow default to modify input content
+						return;
+					case 'Tab':
+						sendBytes([0x09]);
+						// prevent tab focus change so input keeps focus
+						e.preventDefault();
+						return;
+					case 'Escape':
+						sendBytes([0x1B]);
+						return;
+					case 'Delete':
+						sendBytes([0x7F]);
+						return;
+				}
+				
+				// Printable characters: send but let input echo
+				if(e.key && e.key.length === 1){
+					const enc = new TextEncoder();
+					serialSocket.send(enc.encode(e.key));
+					return;
+				}
 			});
 
 

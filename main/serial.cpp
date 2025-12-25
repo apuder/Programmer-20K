@@ -75,3 +75,15 @@ void stop_serial_monitor()
     evt_wait(EVT_STOP_UART_MONITOR);
     ESP_LOGI(TAG, "Serial monitor stopped");
 }
+
+void serial_transmit(const uint8_t* data, size_t len)
+{
+    if (!run_uart_task || len == 0) return;
+
+    int written = uart_write_bytes(UART_PORT, (const char*) data, len);
+    if (written > 0) {
+        uart_wait_tx_done(UART_PORT, pdMS_TO_TICKS(100));
+    } else {
+        ESP_LOGW(TAG, "uart_write_bytes failed (%d)", written);
+    }
+}
