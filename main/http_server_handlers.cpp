@@ -29,6 +29,9 @@ static int serial_ws_fd = -1;
 extern const uint8_t _binary_index_html_start[] asm("_binary_index_html_start");
 extern const uint8_t _binary_index_html_end[]   asm("_binary_index_html_end");
 
+extern const uint8_t _binary_favicon_svg_start[] asm("_binary_favicon_svg_start");
+extern const uint8_t _binary_favicon_svg_end[]   asm("_binary_favicon_svg_end");
+
 
 static esp_err_t send_json(httpd_req_t *req, const char *json)
 {
@@ -41,6 +44,13 @@ static esp_err_t index_get_handler(httpd_req_t *req)
     httpd_resp_set_type(req, "text/html");
     size_t len = (size_t)(_binary_index_html_end - _binary_index_html_start);
     return httpd_resp_send(req, (const char*)_binary_index_html_start, len);
+}
+
+static esp_err_t favicon_get_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "image/svg+xml");
+    size_t len = (size_t)(_binary_favicon_svg_end - _binary_favicon_svg_start);
+    return httpd_resp_send(req, (const char*)_binary_favicon_svg_start, len);
 }
 
 static void set_serial_ws_fd(int fd)
@@ -221,6 +231,7 @@ extern "C" esp_err_t start_http_server()
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     // lower stack usage for constrained systems
     config.stack_size = 4096;
+    config.max_uri_handlers = 16;
 
     // Ensure network stack / event loop are initialized before the HTTP server creates sockets
     // HTTP server only; wifi setup/initialization is performed by the wifi module.
@@ -249,6 +260,23 @@ extern "C" esp_err_t start_http_server()
         .user_ctx = NULL
     };
     httpd_register_uri_handler(server, &index_html_get);
+
+    httpd_uri_t favicon_get = {
+        .uri = "/favicon.svg",
+        .method = HTTP_GET,
+        .handler = favicon_get_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &favicon_get);
+
+    // Also register for /favicon.ico since browsers request this by default
+    httpd_uri_t favicon_ico = {
+        .uri = "/favicon.ico",
+        .method = HTTP_GET,
+        .handler = favicon_get_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &favicon_ico);
 
     httpd_uri_t status_get = {
         .uri = "/status",
