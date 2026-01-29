@@ -1,0 +1,5 @@
+config STRIPBOARD
+    bool "Configure for stripboard version"
+    default n
+    help
+        Configure parameters for the stripboard version.

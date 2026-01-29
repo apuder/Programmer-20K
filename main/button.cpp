@@ -4,14 +4,22 @@
 #include "driver/gpio.h"
 #include "esp_event.h"
 
+#ifdef CONFIG_STRIPBOARD
 #define GPIO_BUTTON GPIO_NUM_36
+#else
+#define GPIO_BUTTON GPIO_NUM_0
+#endif
 
 #define ESP_INTR_FLAG_DEFAULT 0
 
 
 static bool is_status_button_pressed()
 {
+#ifdef CONFIG_STRIPBOARD
   return (GPIO.in1.data & (1 << (GPIO_BUTTON - 32))) == 0;
+#else
+  return (GPIO.in & (1 << GPIO_BUTTON)) == 0;
+#endif
 }
 
 

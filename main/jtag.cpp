@@ -212,14 +212,14 @@ void JTAGAdapter::setup()
 {
   gpio_config_t gpioConfig;
 
-  gpioConfig.pin_bit_mask = GPIO_SEL_5 | GPIO_SEL_18 | GPIO_SEL_21;
+  gpioConfig.pin_bit_mask = TCK | TMS | TDI;
   gpioConfig.mode = GPIO_MODE_OUTPUT;
   gpioConfig.pull_up_en = GPIO_PULLUP_DISABLE;
   gpioConfig.pull_down_en = GPIO_PULLDOWN_DISABLE;
   gpioConfig.intr_type = GPIO_INTR_DISABLE;
   gpio_config(&gpioConfig);
 
-  gpioConfig.pin_bit_mask = GPIO_SEL_19;
+  gpioConfig.pin_bit_mask = TDO;
   gpioConfig.mode = GPIO_MODE_INPUT;
   gpio_config(&gpioConfig);
 }

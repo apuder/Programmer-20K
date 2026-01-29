@@ -43,10 +43,17 @@
 #define ERR_JTAG_UNEXPECTED_IDCODE -3
 
 //#define TDO (1 << (39 - 32))
+#ifdef CONFIG_STRIPBOARD
 #define TDO (1 << 19)
 #define TDI (1 << 5)
 #define TMS (1 << 21)
 #define TCK (1 << 18)
+#else
+#define TDO (1 << 22)
+#define TDI (1 << 19)
+#define TMS (1 << 23)
+#define TCK (1 << 21)
+#endif
 
 
 // GW2A18PG256: IR length = 8
