@@ -154,7 +154,7 @@
 							<label for="storeSelect">Target</label>
 							<select id="storeSelect" aria-label="Choose target">
 								<option value="flash">Flash</option>
-								<option value="sram">SRAM</option>
+								<option value="sram" selected>SRAM</option>
 							</select>
 						</div>
 					</div>
@@ -202,6 +202,7 @@
 		// Redesigned JS for new UI structure and polling
 		(function(){
 			const ssid = el('ssid'), pw = el('password'), connectBtn = el('connectBtn');
+			const wifiSection = el('wifiSection');
 			const offlineOverlay = el('offlineOverlay');
             
 			const drop = el('droparea'), fileInput = el('fileInput'), filesList = el('filesList');
@@ -231,7 +232,11 @@
 					const json = await res.json().catch(()=>({success:false}));
                     
 				} catch(e){}
-				finally{ connectBtn.disabled=false; connectBtn.innerText='Connect'; }
+				finally{ 
+					connectBtn.disabled=false; 
+					connectBtn.innerText='Connect';
+					wifiSection.style.display = 'none';
+				}
 			});
 
             
@@ -258,6 +263,7 @@
 			serialClear.addEventListener('click', ()=>{
 				serialLog.textContent = '';
 				serialLog.scrollTop = serialLog.scrollHeight;
+				serialInput.value = '';
 			});
 
 			// Handle serial input: echo in input, send each keystroke, clear on Enter
@@ -450,7 +456,15 @@
 			function pollReachability(){
 				// Ping server; show overlay if unreachable or non-OK
 				fetch('/status', {cache:'no-store'}).then(r=>{
-					if(r && r.ok) offlineOverlay.setAttribute('hidden','');
+					if(r && r.ok) {
+						offlineOverlay.setAttribute('hidden','');
+						// Check mode and hide WiFi card if in access mode
+						r.json().then(data => {
+							if(data && data.mode === 'access') {
+								wifiSection.style.display = 'none';
+							}
+						}).catch(()=>{});
+					}
 					else offlineOverlay.removeAttribute('hidden');
 				}).catch(()=>{
 					offlineOverlay.removeAttribute('hidden');

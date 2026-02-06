@@ -22,4 +22,7 @@ esp_err_t unregister_wifi_http_handlers(httpd_handle_t server);
 
 void wifi_reset();
 
+// Check if WiFi is configured in STA mode (credentials exist in NVS)
+bool wifi_is_sta_mode();
+
 void init_wifi();

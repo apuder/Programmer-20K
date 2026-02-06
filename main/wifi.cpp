@@ -21,6 +21,7 @@ static bool wifi_initialized = false;
 static bool wifi_connected = false;
 static char wifi_ip[64] = {0};
 static SemaphoreHandle_t wifi_mutex = NULL;
+static bool wifi_sta_mode = false; // cached flag for whether credentials are configured
 
 // forward-declare handlers so register/unregister can use stable references
 static esp_err_t wifi_post_handler(httpd_req_t *req);
@@ -262,6 +263,7 @@ static esp_err_t wifi_post_handler(httpd_req_t *req)
         else nvs_erase_key(nvs_handle, "password");
         nvs_commit(nvs_handle);
         nvs_close(nvs_handle);
+        wifi_sta_mode = true; // credentials stored, mark as STA mode
     } else {
         ESP_LOGW(TAG, "NVS open failed: %s", esp_err_to_name(err));
     }
@@ -296,6 +298,7 @@ void wifi_reset()
             nvs_erase_key(nvs_handle, "password");
             nvs_commit(nvs_handle);
             nvs_close(nvs_handle);
+            wifi_sta_mode = false; // credentials cleared, mark as AP mode
         }
         // remove stored data and start AP mode to allow clients to reconfigure
         wifi_init_base();
@@ -343,6 +346,11 @@ esp_err_t unregister_wifi_http_handlers(httpd_handle_t server)
     return ESP_OK;
 }
 
+bool wifi_is_sta_mode()
+{
+    return wifi_sta_mode;
+}
+
 void init_wifi()
 {
     // Initialize Wi‑Fi/NVS (wifi module will handle no-op if already initialized)
@@ -378,6 +386,7 @@ void init_wifi()
                     if (pass) nvs_get_str(nvs_handle, "password", pass, &pass_len);
                 }
                 ESP_LOGI(TAG, "Found stored Wi-Fi SSID '%s' in NVS - starting STA", ssid);
+                wifi_sta_mode = true; // credentials found in NVS
                 wifi_start_sta(ssid, pass);
                 free(ssid); if (pass) free(pass);
                 nvs_close(nvs_handle);
@@ -385,15 +394,18 @@ void init_wifi()
                 if (ssid) free(ssid);
                 nvs_close(nvs_handle);
                 ESP_LOGI(TAG, "NVS contains ssid key but failed to read value - starting AP fallback");
+                wifi_sta_mode = false;
                 wifi_start_ap();
             }
         } else {
             nvs_close(nvs_handle);
             ESP_LOGI(TAG, "No stored Wi‑Fi credentials, bringing up AP 'Programmer-20K'");
+            wifi_sta_mode = false;
             wifi_start_ap();
         }
     } else {
         ESP_LOGI(TAG, "NVS open failed — starting AP fallback");
+        wifi_sta_mode = false;
         wifi_start_ap();
     }
 }

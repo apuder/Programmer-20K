@@ -111,12 +111,14 @@ static esp_err_t serial_ws_handler(httpd_req_t *req)
 }
 
 /* GET /status
- * Returns minimal server status JSON (no 'connected')
+ * Returns minimal server status JSON with mode information
  */
 static esp_err_t status_get_handler(httpd_req_t *req)
 {
     cJSON *root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "server", "running");
+    bool is_sta = wifi_is_sta_mode();
+    cJSON_AddStringToObject(root, "mode", is_sta ? "access" : "hotspot");
     char *out = cJSON_PrintUnformatted(root);
     send_json(req, out ? out : "{\"server\":\"running\"}");
     if (out) free(out);
