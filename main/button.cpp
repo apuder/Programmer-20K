@@ -3,6 +3,8 @@
 #include "button.h"
 #include "driver/gpio.h"
 #include "esp_event.h"
+#include "esp_timer.h"
+#include "esp_intr_alloc.h"
 
 #ifdef CONFIG_STRIPBOARD
 #define GPIO_BUTTON GPIO_NUM_36
@@ -10,16 +12,11 @@
 #define GPIO_BUTTON GPIO_NUM_0
 #endif
 
-#define ESP_INTR_FLAG_DEFAULT 0
-
 
 static bool is_status_button_pressed()
 {
-#ifdef CONFIG_STRIPBOARD
-  return (GPIO.in1.data & (1 << (GPIO_BUTTON - 32))) == 0;
-#else
-  return (GPIO.in & (1 << GPIO_BUTTON)) == 0;
-#endif
+  // Use gpio_get_level() instead of direct register access for ESP-IDF 5.5.2 compatibility
+  return gpio_get_level(GPIO_BUTTON) == 0;
 }
 
 
@@ -58,6 +55,6 @@ void init_button()
   gpioConfig.intr_type = GPIO_INTR_ANYEDGE;
   gpio_config(&gpioConfig);
 
-  gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
+  gpio_install_isr_service(0); //XXX
   gpio_isr_handler_add(GPIO_BUTTON, isr_button, NULL);
 }

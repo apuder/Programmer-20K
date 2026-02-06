@@ -8,9 +8,9 @@
 #include "esp_event.h"
 #include "esp_wifi.h"
 #include "mdns.h"
+#include "lwip/ip4_addr.h"
 #include "freertos/semphr.h"
 #include "cJSON.h"
-
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>

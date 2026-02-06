@@ -1,8 +1,9 @@
 
 #include "led.h"
-#include "driver/rmt.h"
+#include "driver/rmt_tx.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_rom_sys.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
@@ -45,58 +46,27 @@ public:
 class LEDWS2812Driver : public virtual LEDDriver {
 private:
   // WS2812B timing: 800kHz data rate
-  // 0 bit: 0.4µs high + 0.85µs low = 1.25µs total
-  // 1 bit: 0.8µs high + 0.45µs low = 1.25µs total
-  // Using RMT for precise hardware-controlled timing
-  // Clock divider: 80MHz / 4 = 20MHz (50ns resolution)
-  // 0 bit: 8 ticks high (0.4µs) + 17 ticks low (0.85µs)
-  // 1 bit: 16 ticks high (0.8µs) + 9 ticks low (0.45µs)
+  // Using RMT with 8MHz clock = 125ns resolution
+  // T0H: 350ns ≈ 3 ticks, T0L: 900ns ≈ 7 ticks
+  // T1H: 700ns ≈ 6 ticks, T1L: 600ns ≈ 5 ticks
 
   const static int WS2812B_GPIO = 25;
   const static int WS2812B_NUM_LEDS = 1;
-  const static int WS2812B_RMT_CLK_DIV = 4;
+  const static int WS2812B_RMT_CLK_KHZ = 8000;  // 8MHz clock
   const static int WS2812B_DEFAULT_BRIGHTNESS = 0x55;
-  const static rmt_channel_t WS2812B_RMT_CHANNEL = RMT_CHANNEL_0;
 
-  // RMT items for 0 and 1 bits (ticks @ 50ns resolution)
-  // RMT item format: {{{ duration0, level0, duration1, level1 }}}
-  // Each duration is in ticks (50ns per tick @ 20MHz clock)
-  const rmt_item32_t bit0 = {{{ 8, 1, 17, 0 }}}; // WS2812B '0': 8*50ns=0.4µs high, 17*50ns=0.85µs low (1.25µs total)
-  const rmt_item32_t bit1 = {{{ 16, 1, 9, 0 }}}; // WS2812B '1': 16*50ns=0.8µs high, 9*50ns=0.45µs low (1.25µs total)
+  // RMT handles
+  rmt_channel_handle_t rmt_channel = nullptr;
+  rmt_encoder_handle_t rmt_encoder = nullptr;
 
-  // Buffer to hold RGB data and converted RMT items
+  // Buffer to hold RGB data
   uint8_t led_buffer[WS2812B_NUM_LEDS * 3]; // RGB bytes
-  rmt_item32_t rmt_items[WS2812B_NUM_LEDS * 24]; // RMT items (24 bits per LED)
 
-  void convert_to_rmt_items() {
-      for (int led = 0; led < WS2812B_NUM_LEDS; led++) {
-          // WS2812B color order is GRB (Green, Red, Blue)
-          uint8_t g = led_buffer[led * 3 + 0];
-          uint8_t r = led_buffer[led * 3 + 1];
-          uint8_t b = led_buffer[led * 3 + 2];
-          
-          uint8_t grb[3] = {g, r, b};
-          
-          // Convert each byte to 8 RMT items (one per bit)
-          for (int byte_idx = 0; byte_idx < 3; byte_idx++) {
-              uint8_t byte = grb[byte_idx];
-              for (int bit = 0; bit < 8; bit++) {
-                  int item_idx = (led * 24) + (byte_idx * 8) + bit;
-                  // MSB first
-                  if (byte & (1 << (7 - bit))) {
-                      rmt_items[item_idx] = bit1;
-                  } else {
-                      rmt_items[item_idx] = bit0;
-                  }
-              }
-          }
-      }
-  }
 
   void ws2812b_set_color(uint16_t index, uint8_t r, uint8_t g, uint8_t b) {
       if (index >= WS2812B_NUM_LEDS) return;
       
-      // Store RGB in buffer (will convert to GRB during RMT conversion)
+      // Store RGB in buffer (WS2812B uses GRB color order)
       led_buffer[index * 3 + 0] = g;
       led_buffer[index * 3 + 1] = r;
       led_buffer[index * 3 + 2] = b;
@@ -109,35 +79,74 @@ private:
   }
 
   void ws2812b_update() {
-      // Convert RGB buffer to RMT items
-      convert_to_rmt_items();
-      
-      // Send via RMT
-      esp_err_t ret = rmt_write_items(WS2812B_RMT_CHANNEL, rmt_items, WS2812B_NUM_LEDS * 24, true);
-      if (ret != ESP_OK) {
-          ESP_LOGW(TAG, "RMT write failed: %s", esp_err_to_name(ret));
+      if (!rmt_channel || !rmt_encoder) {
+          ESP_LOGW(TAG, "RMT not initialized");
+          return;
       }
+
+      rmt_transmit_config_t tx_conf = {
+          .loop_count = 0,
+      };
+
+      esp_err_t ret = rmt_transmit(rmt_channel, rmt_encoder, led_buffer, 
+                                    sizeof(led_buffer), &tx_conf);
+      if (ret != ESP_OK) {
+          ESP_LOGW(TAG, "RMT transmit failed: %s", esp_err_to_name(ret));
+          return;
+      }
+
+        rmt_tx_wait_all_done(rmt_channel, portMAX_DELAY);
+        esp_rom_delay_us(60);
   }
 
 public:
   LEDWS2812Driver() {
     ESP_LOGI(TAG, "Initializing WS2812B on GPIO %d using RMT", WS2812B_GPIO);
-    
-    rmt_config_t config = RMT_DEFAULT_CONFIG_TX((gpio_num_t)WS2812B_GPIO, WS2812B_RMT_CHANNEL);
-    config.clk_div = WS2812B_RMT_CLK_DIV;
-    
-    esp_err_t ret = rmt_config(&config);
+
+    // Create RMT TX channel
+    rmt_tx_channel_config_t tx_chan_config = {
+        .gpio_num = (gpio_num_t) WS2812B_GPIO,
+        .clk_src = RMT_CLK_SRC_DEFAULT,
+        .resolution_hz = WS2812B_RMT_CLK_KHZ * 1000,  // 8MHz clock
+        .mem_block_symbols = 64,
+        .trans_queue_depth = 4,
+        .flags = {
+            .invert_out = false,
+            .with_dma = false,
+        }
+    };
+
+    esp_err_t ret = rmt_new_tx_channel(&tx_chan_config, &rmt_channel);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "RMT config failed: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "RMT TX channel creation failed: %s", esp_err_to_name(ret));
         return;
     }
-    
-    ret = rmt_driver_install(config.channel, 0, 0);
+
+    // Create the WS2812B bytes encoder
+    rmt_bytes_encoder_config_t bytes_config = {};
+    bytes_config.bit0.level0 = 1;
+    bytes_config.bit0.duration0 = 3;
+    bytes_config.bit0.level1 = 0;
+    bytes_config.bit0.duration1 = 7;
+    bytes_config.bit1.level0 = 1;
+    bytes_config.bit1.duration0 = 6;
+    bytes_config.bit1.level1 = 0;
+    bytes_config.bit1.duration1 = 5;
+    bytes_config.flags.msb_first = 1;
+
+    ret = rmt_new_bytes_encoder(&bytes_config, &rmt_encoder);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "RMT driver install failed: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "RMT encoder creation failed: %s", esp_err_to_name(ret));
         return;
     }
-    
+
+    // Enable the RMT channel
+    ret = rmt_enable(rmt_channel);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "RMT enable failed: %s", esp_err_to_name(ret));
+        return;
+    }
+
     // Clear buffer
     memset(led_buffer, 0, sizeof(led_buffer));
     ESP_LOGI(TAG, "WS2812B initialized with RMT");

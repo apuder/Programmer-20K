@@ -7,6 +7,7 @@
 #include "esp_system.h"
 #include "driver/gpio.h"
 #include "driver/uart.h"
+#include "soc/gpio_struct.h"
 #include <cstring>
 
 #define NOOP				0x02

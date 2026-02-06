@@ -7,3 +7,6 @@ tags
 venv/
 .github/
 .vscode/
+managed_components/
+dependencies.lock
+.component_hash
