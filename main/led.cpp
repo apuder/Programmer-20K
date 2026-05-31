@@ -184,10 +184,12 @@ static void led_task(void* p)
   bool on = false;
   bool auto_off = false;
 
-#ifdef CONFIG_STRIPBOARD
+#if defined(CONFIG_STRIPBOARD)
   LEDDriver* driver = new LEDGPIODriver();
-#else
+#elif defined(CONFIG_PROGRAMMER_20K)
   LEDDriver* driver = new LEDWS2812Driver();
+#else
+  LEDDriver* driver = nullptr;
 #endif
   
   while(true) {
@@ -211,9 +213,9 @@ static void led_task(void* p)
     }
 
     if (on) {
-      driver->set_led(r, g, b);
+      if (driver) driver->set_led(r, g, b);
     } else {
-      driver->set_led(false, false, false);
+      if (driver) driver->set_led(false, false, false);
       if (auto_off) {
         delay = portMAX_DELAY;
       }

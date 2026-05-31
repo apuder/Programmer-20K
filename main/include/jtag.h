@@ -43,12 +43,16 @@
 #define ERR_JTAG_UNEXPECTED_DEVICES -2
 #define ERR_JTAG_UNEXPECTED_IDCODE -3
 
-//#define TDO (1 << (39 - 32))
-#ifdef CONFIG_STRIPBOARD
+#if defined(CONFIG_STRIPBOARD)
 #define TDO (1 << 19)
 #define TDI (1 << 5)
 #define TMS (1 << 21)
 #define TCK (1 << 18)
+#elif defined(CONFIG_MINI_PC)
+#define TDO (1ULL << 39)
+#define TDI (1 << 27)
+#define TMS (1 << 5)
+#define TCK (1 << 23)
 #else
 #define TDO (1 << 22)
 #define TDI (1 << 19)
@@ -79,7 +83,11 @@ private:
   inline bool inport() {
     //return GPIO.in >> 13;
     //return (GPIO.in1.data & TDO) != 0;
+  #if defined(CONFIG_MINI_PC)
+    return (GPIO.in1.data & (1 << (39 - 32))) != 0;
+  #else
     return (GPIO.in & TDO) != 0;
+  #endif
   }
 
 public:

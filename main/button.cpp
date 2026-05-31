@@ -15,7 +15,6 @@
 
 static bool is_status_button_pressed()
 {
-  // Use gpio_get_level() instead of direct register access for ESP-IDF 5.5.2 compatibility
   return gpio_get_level(GPIO_BUTTON) == 0;
 }
 

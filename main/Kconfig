@@ -1,5 +1,13 @@
-config STRIPBOARD
-    bool "Configure for stripboard version"
-    default n
+choice
+    prompt "Target"
+    default PROGRAMMER_20K
     help
-        Configure parameters for the stripboard version.
+        Select the target platform...
+
+config PROGRAMMER_20K
+    bool "Programmer-20K"
+config STRIPBOARD
+    bool "Stripboard"
+config MINI_PC
+    bool "MiniPC"
+endchoice
