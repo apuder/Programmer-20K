@@ -13,8 +13,8 @@
 #define UART_RX_PIN     35
 #define UART_TX_PIN     15
 #else
-#define UART_RX_PIN     16
-#define UART_TX_PIN     17
+#define UART_RX_PIN     5
+#define UART_TX_PIN     18
 #endif
 
 #define BUF_SIZE        1024
