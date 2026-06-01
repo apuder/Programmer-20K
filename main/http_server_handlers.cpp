@@ -328,17 +328,32 @@ extern "C" esp_err_t stop_http_server()
 extern "C" void log_serial_monitor(uint8_t *data, int len)
 {
     if (!data || len <= 0 || !server) return;
-    int fd = get_serial_ws_fd();
-    if (fd < 0) return;
+
+    // Broadcast to every active websocket client. A cached fd can go stale
+    // (or be cleared on transient errors), which can silently stop forwarding.
+    int client_fds[16] = {0};
+    size_t client_count = sizeof(client_fds) / sizeof(client_fds[0]);
+    if (httpd_get_client_list(server, &client_count, client_fds) != ESP_OK || client_count == 0) {
+        return;
+    }
 
     httpd_ws_frame_t frame = {0};
     frame.type = HTTPD_WS_TYPE_BINARY;
     frame.payload = data;
     frame.len = len;
 
-    esp_err_t err = httpd_ws_send_frame_async(server, fd, &frame);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "serial ws send failed: %s", esp_err_to_name(err));
-        set_serial_ws_fd(-1);
+    for (size_t i = 0; i < client_count; ++i) {
+        const int fd = client_fds[i];
+        if (httpd_ws_get_fd_info(server, fd) != HTTPD_WS_CLIENT_WEBSOCKET) {
+            continue;
+        }
+
+        esp_err_t err = httpd_ws_send_data(server, fd, &frame);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "serial ws send failed fd=%d: %s", fd, esp_err_to_name(err));
+            if (fd == get_serial_ws_fd()) {
+                set_serial_ws_fd(-1);
+            }
+        }
     }
 }
