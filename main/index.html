@@ -66,6 +66,7 @@
 		.serial-actions{display:flex;align-items:center;gap:10px}
 		.serial-log-wrap{border:1px solid rgba(255,255,255,0.06);border-radius:10px;background:linear-gradient(180deg, rgba(0,0,0,0.25), rgba(255,255,255,0.02));padding:6px 8px}
 		#serialLog{height:220px;margin:0;padding:10px 12px;overflow-y:auto;font-family:"JetBrains Mono","SFMono-Regular","Menlo","Consolas",monospace;font-size:13px;white-space:pre-wrap;word-break:break-word;background:transparent;color:#e6eef6}
+		#serialLog .serial-bold{font-weight:700;color:#fff}
 		.badge.serial-live{background:linear-gradient(90deg, #0ea5e933, #06b6d466);color:#0f1724}
 
 		.btn.serial-primary{background:linear-gradient(90deg, #06b6d4, #0891b2); border:0;color:white;box-shadow:0 6px 16px rgba(6,182,212,0.12)}
@@ -216,6 +217,8 @@
 			const serialClear = el('serialClear');
 			const serialInput = el('serialInput');
 			const serialDecoder = new TextDecoder();
+			const serialMaxLen = 24000;
+			const serialAnsi = { bold: false, escape: '', charCount: 0 };
 
 			let isConnected = true;
 			let polling = null;
@@ -262,6 +265,9 @@
 
 			serialClear.addEventListener('click', ()=>{
 				serialLog.textContent = '';
+				serialAnsi.bold = false;
+				serialAnsi.escape = '';
+				serialAnsi.charCount = 0;
 				serialLog.scrollTop = serialLog.scrollHeight;
 				serialInput.value = '';
 			});
@@ -315,18 +321,111 @@
 			});
 
 
+			function appendSerialChunk(text, isBold){
+				if(!text) return;
+				const last = serialLog.lastChild;
+				if(isBold){
+					if(last && last.nodeType === Node.ELEMENT_NODE && last.classList.contains('serial-bold')){
+						last.textContent += text;
+					} else {
+						const span = document.createElement('span');
+						span.className = 'serial-bold';
+						span.textContent = text;
+						serialLog.appendChild(span);
+					}
+				} else if(last && last.nodeType === Node.TEXT_NODE){
+					last.textContent += text;
+				} else {
+					serialLog.appendChild(document.createTextNode(text));
+				}
+				serialAnsi.charCount += text.length;
+			}
+
+			function trimSerialLog(maxLen){
+				while(serialAnsi.charCount > maxLen && serialLog.firstChild){
+					const excess = serialAnsi.charCount - maxLen;
+					const first = serialLog.firstChild;
+					const content = first.textContent || '';
+					if(content.length <= excess){
+						serialAnsi.charCount -= content.length;
+						serialLog.removeChild(first);
+						continue;
+					}
+					first.textContent = content.slice(excess);
+					serialAnsi.charCount -= excess;
+				}
+			}
+
+			function applyAnsiSequence(sequence){
+				if(!sequence.startsWith('\u001b[') || sequence.length < 3) return;
+				const finalChar = sequence[sequence.length - 1];
+				if(finalChar !== 'm') return;
+
+				const payload = sequence.slice(2, -1);
+				const codes = payload.length
+					? payload.split(';').map(v => Number(v)).filter(v => Number.isFinite(v))
+					: [0];
+
+				if(codes.includes(0) || codes.includes(22)){
+					serialAnsi.bold = false;
+				}
+				if(codes.includes(1)){
+					serialAnsi.bold = true;
+				}
+			}
+
+			function isAnsiSequenceComplete(sequence){
+				if(!sequence.startsWith('\u001b[') || sequence.length < 3) return false;
+				const code = sequence.charCodeAt(sequence.length - 1);
+				return code >= 0x40 && code <= 0x7e;
+			}
+
+			function isAnsiPrefix(sequence){
+				if(sequence === '\u001b') return true;
+				if(sequence === '\u001b[') return true;
+				if(!sequence.startsWith('\u001b[')) return false;
+
+				const code = sequence.charCodeAt(sequence.length - 1);
+				if(code >= 0x40 && code <= 0x7e){
+					return false;
+				}
+				return true;
+			}
+
 			function appendSerial(data){
 				let text = '';
 				if(typeof data === 'string') text = data;
 				else if(data instanceof ArrayBuffer) text = serialDecoder.decode(new Uint8Array(data));
 				else text = String(data || '');
+				text = text.replace(/\r\n|\n\r|\r/g, '\n');
 
 				const atBottom = (serialLog.scrollTop + serialLog.clientHeight) >= (serialLog.scrollHeight - 8);
-				serialLog.textContent += text;
-				const maxLen = 24000;
-				if(serialLog.textContent.length > maxLen){
-					serialLog.textContent = serialLog.textContent.slice(serialLog.textContent.length - maxLen);
+				let buffer = '';
+				for(let i = 0; i < text.length; i++){
+					const ch = text[i];
+					if(serialAnsi.escape){
+						serialAnsi.escape += ch;
+						if(isAnsiSequenceComplete(serialAnsi.escape)){
+							appendSerialChunk(buffer, serialAnsi.bold);
+							buffer = '';
+							applyAnsiSequence(serialAnsi.escape);
+							serialAnsi.escape = '';
+						} else if(!isAnsiPrefix(serialAnsi.escape)){
+							buffer += serialAnsi.escape;
+							serialAnsi.escape = '';
+						}
+						continue;
+					}
+					if(ch === '\u001b'){
+						appendSerialChunk(buffer, serialAnsi.bold);
+						buffer = '';
+						serialAnsi.escape = ch;
+						continue;
+					}
+					buffer += ch;
 				}
+				appendSerialChunk(buffer, serialAnsi.bold);
+				trimSerialLog(serialMaxLen);
 				if(atBottom) serialLog.scrollTop = serialLog.scrollHeight;
 			}
 
