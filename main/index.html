@@ -4,7 +4,6 @@
 	<meta charset="utf-8" />
 	<meta name="viewport" content="width=device-width,initial-scale=1" />
 	<title>Programmer for the 20K</title>
-	<link rel="icon" type="image/svg+xml" sizes="any" href="/favicon.svg">
 	<style>
 		/* Modern, compact CSS — all inlined so this file is fully self-contained */
 		:root{
@@ -156,6 +155,7 @@
 							<select id="storeSelect" aria-label="Choose target">
 								<option value="flash">Flash</option>
 								<option value="sram" selected>SRAM</option>
+								<option value="litex">LiteX</option>
 							</select>
 						</div>
 					</div>
@@ -217,8 +217,22 @@
 			const serialClear = el('serialClear');
 			const serialInput = el('serialInput');
 			const serialDecoder = new TextDecoder();
+			const serialEncoder = new TextEncoder();
 			const serialMaxLen = 24000;
 			const serialAnsi = { bold: false, escape: '', charCount: 0 };
+			const SFL_MAGIC_REQ = serialEncoder.encode('sL5DdSMmkekro\n');
+			const SFL_MAGIC_REQ_NO_LF = serialEncoder.encode('sL5DdSMmkekro');
+			const SFL_MAGIC_ACK = serialEncoder.encode('z6IHG7cYDID6o\n');
+			const SFL_ACK_SUCCESS = 'K'.charCodeAt(0);
+			const SFL_ACK_CRCERROR = 'C'.charCodeAt(0);
+			const SFL_ACK_UNKNOWN = 'U'.charCodeAt(0);
+			const SFL_ACK_ERROR = 'E'.charCodeAt(0);
+			const SFL_CMD_ABORT = 0x00;
+			const SFL_CMD_LOAD = 0x01;
+			const SFL_CMD_JUMP = 0x02;
+			const SFL_PAYLOAD_MAX = 255;
+			const SFL_LOAD_DATA_MAX = 128; // Doubled for faster stop-and-wait payload transfer.
+			const LITEX_DEFAULT_ADDRESS = 0x40000000;
 
 			let isConnected = true;
 			let polling = null;
@@ -226,6 +240,7 @@
 			let serialSocket = null;
 			let serialReconnect = null;
 			let serialBackoff = 500;
+			let activeLiteXUpload = null;
 
 			connectBtn.addEventListener('click', async()=>{
 				const body = { ssid: ssid.value || '', password: pw.value || '' };
@@ -396,6 +411,7 @@
 				let text = '';
 				if(typeof data === 'string') text = data;
 				else if(data instanceof ArrayBuffer) text = serialDecoder.decode(new Uint8Array(data));
+				else if(ArrayBuffer.isView(data)) text = serialDecoder.decode(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
 				else text = String(data || '');
 				text = text.replace(/\r\n|\n\r|\r/g, '\n');
 
@@ -458,9 +474,248 @@
 					return;
 				}
 				serialSocket.onopen = ()=>{ serialBackoff = 500; };
-				serialSocket.onmessage = (ev)=>{ appendSerial(ev.data); };
-				serialSocket.onclose = ()=>{ scheduleSerialReconnect(); };
+				serialSocket.onmessage = (ev)=>{
+					const bytes = toUint8Array(ev.data);
+					const visible = activeLiteXUpload ? activeLiteXUpload.consumeIncoming(bytes) : bytes;
+					if(visible && visible.length) appendSerial(visible);
+				};
+				serialSocket.onclose = ()=>{
+					if(activeLiteXUpload){
+						activeLiteXUpload.fail('Serial socket disconnected during LiteX upload.');
+					}
+					scheduleSerialReconnect();
+				};
 				serialSocket.onerror = ()=>{ if(serialSocket) serialSocket.close(); };
+			}
+
+			function toUint8Array(data){
+				if(data instanceof Uint8Array) return data;
+				if(data instanceof ArrayBuffer) return new Uint8Array(data);
+				if(ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+				if(typeof data === 'string') return serialEncoder.encode(data);
+				return new Uint8Array();
+			}
+
+			function crc16Ccitt(bytes){
+				let crc = 0;
+				for(let i = 0; i < bytes.length; i++){
+					crc ^= (bytes[i] << 8);
+					for(let b = 0; b < 8; b++){
+						if(crc & 0x8000) crc = ((crc << 1) ^ 0x1021) & 0xffff;
+						else crc = (crc << 1) & 0xffff;
+					}
+				}
+				return crc & 0xffff;
+			}
+
+			function u32be(value){
+				return new Uint8Array([
+					(value >>> 24) & 0xff,
+					(value >>> 16) & 0xff,
+					(value >>> 8) & 0xff,
+					value & 0xff,
+				]);
+			}
+
+			function concatBytes(a, b){
+				const out = new Uint8Array(a.length + b.length);
+				out.set(a, 0);
+				out.set(b, a.length);
+				return out;
+			}
+
+			function encodeSflFrame(cmd, payload){
+				if(payload.length > SFL_PAYLOAD_MAX) throw new Error('SFL payload too large');
+				const cmdPayload = new Uint8Array(1 + payload.length);
+				cmdPayload[0] = cmd & 0xff;
+				cmdPayload.set(payload, 1);
+				const crc = crc16Ccitt(cmdPayload);
+				const frame = new Uint8Array(1 + 2 + cmdPayload.length);
+				frame[0] = payload.length & 0xff;
+				frame[1] = (crc >>> 8) & 0xff;
+				frame[2] = crc & 0xff;
+				frame.set(cmdPayload, 3);
+				return frame;
+			}
+
+			function isSflAckByte(byte){
+				return byte === SFL_ACK_SUCCESS || byte === SFL_ACK_CRCERROR || byte === SFL_ACK_UNKNOWN || byte === SFL_ACK_ERROR;
+			}
+
+			function makeLiteXUploader(fileName, imageBytes){
+				const state = {
+					fileName,
+					imageBytes,
+					active: true,
+					phase: 'waiting-magic',
+					magicIdx: 0,
+					magicNoLfIdx: 0,
+					magicSeen: false,
+					magicWaiter: null,
+					ackWaiter: null,
+				};
+
+				function closeWaiter(waiter, value, err){
+					if(!waiter) return;
+					clearTimeout(waiter.timer);
+					if(err) waiter.reject(err);
+					else waiter.resolve(value);
+				}
+
+				function setProgress(pct, text){
+					uploadProgressWrap.style.display = 'block';
+					uploadProgressBar.style.width = Math.max(0, Math.min(100, pct)).toFixed(1) + '%';
+					uploadProgressText.textContent = text || '';
+				}
+
+				function setResult(ok, text){
+					uploadResult.textContent = text;
+					uploadResult.style.color = ok ? '#aaffcc' : '#ffb4b4';
+				}
+
+				function waitMagic(timeoutMs){
+					if(state.magicSeen) return Promise.resolve();
+					return new Promise((resolve, reject)=>{
+						state.magicWaiter = {
+							resolve,
+							reject,
+							timer: setTimeout(()=>{
+								state.magicWaiter = null;
+								reject(new Error('Timed out waiting for LiteX serial boot magic string.'));
+							}, timeoutMs),
+						};
+					});
+				}
+
+				function waitAck(timeoutMs){
+					if(state.ackWaiter) throw new Error('Protocol error: nested ACK waits.');
+					return new Promise((resolve, reject)=>{
+						state.ackWaiter = {
+							resolve,
+							reject,
+							timer: setTimeout(()=>{
+								state.ackWaiter = null;
+								reject(new Error('Timed out waiting for SFL ACK.'));
+							}, timeoutMs),
+						};
+					});
+				}
+
+				function socketSend(bytes){
+					if(!serialSocket || serialSocket.readyState !== WebSocket.OPEN){
+						throw new Error('Serial socket is not connected.');
+					}
+					serialSocket.send(bytes);
+				}
+
+				async function sendAbort(){
+					try {
+						const abortFrame = encodeSflFrame(SFL_CMD_ABORT, new Uint8Array(0));
+						socketSend(abortFrame);
+						await waitAck(1000);
+					} catch(_){
+						// Best effort: BIOS will eventually recover on its own.
+					}
+				}
+
+				async function sendFrameWithRetry(cmd, payload, retries){
+					const frame = encodeSflFrame(cmd, payload);
+					for(let attempt = 0; attempt <= retries; attempt++){
+						socketSend(frame);
+						const ack = await waitAck(2000);
+						if(ack === SFL_ACK_SUCCESS) return;
+						if((ack === SFL_ACK_CRCERROR || ack === SFL_ACK_ERROR) && attempt < retries) continue;
+						if(ack === SFL_ACK_ERROR) throw new Error('Device reported frame error (E).');
+						if(ack === SFL_ACK_UNKNOWN) throw new Error('Device reported unknown command (U).');
+						throw new Error('Unexpected SFL ACK byte: 0x' + ack.toString(16).padStart(2, '0'));
+					}
+					throw new Error('Too many retries during SFL upload (C/E acknowledgements).');
+				}
+
+				function updateMagicByte(byte){
+					const expected = SFL_MAGIC_REQ[state.magicIdx];
+					if(byte === expected) state.magicIdx += 1;
+					else state.magicIdx = (byte === SFL_MAGIC_REQ[0]) ? 1 : 0;
+
+					const expectedNoLf = SFL_MAGIC_REQ_NO_LF[state.magicNoLfIdx];
+					if(byte === expectedNoLf) state.magicNoLfIdx += 1;
+					else state.magicNoLfIdx = (byte === SFL_MAGIC_REQ_NO_LF[0]) ? 1 : 0;
+
+					if(state.magicIdx === SFL_MAGIC_REQ.length || state.magicNoLfIdx === SFL_MAGIC_REQ_NO_LF.length){
+						state.magicSeen = true;
+						state.magicIdx = 0;
+						state.magicNoLfIdx = 0;
+						closeWaiter(state.magicWaiter, true, null);
+						state.magicWaiter = null;
+					}
+				}
+
+				function consumeIncoming(bytes){
+					if(!state.active) return bytes;
+					const visible = [];
+					for(let i = 0; i < bytes.length; i++){
+						const b = bytes[i];
+						if(state.phase === 'waiting-magic') updateMagicByte(b);
+						if(state.ackWaiter && isSflAckByte(b)){
+							const waiter = state.ackWaiter;
+							state.ackWaiter = null;
+							closeWaiter(waiter, b, null);
+							continue;
+						}
+						visible.push(b);
+					}
+					return new Uint8Array(visible);
+				}
+
+				function fail(msg){
+					if(!state.active) return;
+					state.active = false;
+					setResult(false, msg);
+					uploadProgressText.textContent = '';
+					if(state.magicWaiter){
+						closeWaiter(state.magicWaiter, null, new Error(msg));
+						state.magicWaiter = null;
+					}
+					if(state.ackWaiter){
+						closeWaiter(state.ackWaiter, null, new Error(msg));
+						state.ackWaiter = null;
+					}
+					sendAbort();
+				}
+
+				async function run(){
+					setProgress(0, 'Waiting for SFL magic from BIOS...');
+					setResult(false, 'LiteX upload waiting for serial boot handshake...');
+					await waitMagic(45000);
+					setResult(false, '');
+					state.phase = 'uploading';
+					socketSend(SFL_MAGIC_ACK);
+
+					let offset = 0;
+					let address = LITEX_DEFAULT_ADDRESS;
+					while(offset < state.imageBytes.length){
+						const chunkLen = Math.min(SFL_LOAD_DATA_MAX, state.imageBytes.length - offset);
+						const chunk = state.imageBytes.subarray(offset, offset + chunkLen);
+						const payload = concatBytes(u32be(address >>> 0), chunk);
+						await sendFrameWithRetry(SFL_CMD_LOAD, payload, 16);
+						offset += chunkLen;
+						address += chunkLen;
+						const pct = (offset * 100) / state.imageBytes.length;
+						setProgress(pct, 'Uploading ' + offset + '/' + state.imageBytes.length + ' bytes');
+						await new Promise(resolve => setTimeout(resolve, 1));
+					}
+
+					state.phase = 'jumping';
+					setProgress(100, 'Sending jump command...');
+					await sendFrameWithRetry(SFL_CMD_JUMP, u32be(LITEX_DEFAULT_ADDRESS >>> 0), 2);
+					state.phase = 'done';
+					state.active = false;
+					setResult(true, 'LiteX serial boot upload complete.');
+					uploadProgressText.textContent = '';
+					setTimeout(()=>{ uploadProgressWrap.style.display = 'none'; }, 1400);
+				}
+
+				return { consumeIncoming, run, fail };
 			}
 
 			// Drag/drop handlers
@@ -491,11 +746,12 @@
 				if(count > 1){ showUploadError('Only one file can be uploaded at a time'); return; }
 				const file = list[0];
 				if(file) {
-					if(!file.name.toLowerCase().endsWith('.bin')) {
+					if(store.value !== 'litex' && !file.name.toLowerCase().endsWith('.bin')) {
 						showUploadError('Only .bin files are accepted.');
 						return;
 					}
-					uploadFile(file);
+					if(store.value === 'litex') uploadFileLiteX(file);
+					else uploadFile(file);
 				}
 			}
 
@@ -548,6 +804,45 @@
 					}
 				};
 				xhr.send(form);
+			}
+
+			async function uploadFileLiteX(file){
+				if(activeLiteXUpload){
+					showUploadError('A LiteX upload is already in progress.');
+					return;
+				}
+				if(!serialSocket || serialSocket.readyState !== WebSocket.OPEN){
+					showUploadError('Serial WebSocket is not connected.');
+					return;
+				}
+
+				uploadProgressWrap.style.display = 'block';
+				uploadProgressBar.style.width = '0%';
+				uploadProgressText.textContent = '';
+				uploadResult.textContent = '';
+				filesList.innerHTML = '';
+
+				let imageBytes;
+				try{
+					imageBytes = new Uint8Array(await file.arrayBuffer());
+				} catch(e){
+					showUploadError('Could not read dropped file.');
+					return;
+				}
+				if(!imageBytes.length){
+					showUploadError('Dropped file is empty.');
+					return;
+				}
+
+				activeLiteXUpload = makeLiteXUploader(file.name, imageBytes);
+				try{
+					await activeLiteXUpload.run();
+				} catch(e){
+					const msg = e && e.message ? e.message : 'LiteX serial boot upload failed.';
+					if(activeLiteXUpload) activeLiteXUpload.fail(msg);
+				} finally {
+					activeLiteXUpload = null;
+				}
 			}
 
 			connectSerialSocket();
